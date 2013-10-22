@@ -12,24 +12,29 @@
 #define SERVER_NAME "C lang"
 #define MAX_CHILDREN 3
 
-void http (struct hss_sock *);
-void fork_process(struct hss_sock *);
-void res(struct hss_sock *, char *, size_t);
-void error(char *);
-void ignore_sigpipe(void);
-int changeroot(void);
-void mime(struct hss_sock *);
-
 struct hss_sock {
     int fd;
     socklen_t len;
     struct sockaddr_in ad; // netinet/in.h
 };
+struct hss_req {
+    char method[16];
+    char uri[1024];
+    char ver[64];
+    int fd;
+};
+
+void http (struct hss_sock *);
+void fork_process(struct hss_sock *);
+void res(struct hss_sock *, char *);
+void error(char *);
+void ignore_sigpipe(void);
+int changeroot(void);
+void setmimetype(struct hss_sock *, struct hss_req *);
 
 int main(){
     int pid, ret;
-    struct hss_sock s_sock, *s__ptr;
-    s_ptr = &s_sock;
+    struct hss_sock s_sock, *s_ptr; s_ptr = &s_sock;
 
     ret = changeroot();
     if(ret == -1) {
@@ -48,11 +53,11 @@ int main(){
 
     ret = bind(s_ptr->fd, (struct sockaddr *)&s_ptr->ad, s_ptr->len);
     if(ret == -1) {
-        errmes("bind()"); return -1;
+        error("bind()"); return -1;
     }
     ret = listen(s_ptr->fd, MAX_CHILDREN * 5);
     if(ret == -1) {
-        errmes("listen"); return -1;
+        error("listen"); return -1;
     }
     int i;
     for(i = 0; i < MAX_CHILDREN; i++) {
@@ -101,6 +106,7 @@ void fork_process(struct hss_sock *s_ptr) {
     }
 }
 
+/*
 void setenvp(int *sock_fd, struct sockaddr *address) {
     char buf[1024];
     memset(buf, 0, sizeof(fields));
@@ -108,38 +114,34 @@ void setenvp(int *sock_fd, struct sockaddr *address) {
     strncat(envp[*sock_fd], address.sin_addr.s_addr, strlen(envp[*sock_fd]) + strlen(address.sin_addr.s_addr));
     envp[*sock_fd]
 }
+*/
 
 void http(struct hss_sock *c_ptr) {
     int ret;
     char buf[0x10000] = {};
-    struct hss_req {
-        char method[16];
-        char uri[1024];
-        char ver[64];
-        int fd;
-    } r, *r_ptr; r_ptr = &r;
+    struct hss_req r, *r_ptr; r_ptr = &r;
 
     read(c_ptr->fd, &buf, sizeof(buf));
     sscanf(buf, "%s %s %s", r_ptr->method, r_ptr->uri, r_ptr->ver);
 
     if( strcmp(r_ptr->method, "GET") != 0 ) {
-        res(c_ptr, "501 Not Implemented", NULL);
-        res(c_ptr, SERVER_NAME, NULL);
+        res(c_ptr, "501 Not Implemented");
+        res(c_ptr, SERVER_NAME);
     } else {
-        r_ptr->fd = open(c_ptr->ad, O_RDONLY);
+        r_ptr->fd = open(r_ptr->uri, O_RDONLY);
         if(r_ptr->fd == -1) {
             error("NOT FOUND");
-            res(c_ptr, "HTTP/1.0 404 NOT FOUND", NULL);
-            res(c_ptr, SERVER_NAME, NULL);
-            res(c_ptr, "Content-Type: text/html\n", NULL);
-            res(c_ptr, "<html><body><h1>404 NOT FOUND</h1></body></html>", NULL);
+            res(c_ptr, "HTTP/1.0 404 NOT FOUND");
+            res(c_ptr, SERVER_NAME);
+            res(c_ptr, "Content-Type: text/html\n");
+            res(c_ptr, "<html><body><h1>404 NOT FOUND</h1></body></html>");
         } else {
-            res(c_ptr, "HTTP/1.0 200 OK", NULL);
-            res(c_ptr, SERVER_NAME, NULL);
-            mime(c_ptr);
+            res(c_ptr, "HTTP/1.0 200 OK");
+            res(c_ptr, SERVER_NAME);
+            setmimetype(c_ptr, r_ptr);
             do {
                 ret = read(r_ptr->fd, &buf, sizeof(buf));
-                res(c_ptr, buf, ret);
+                write(c_ptr->fd, buf, ret);
             } while(ret > 0);
             close(r_ptr->fd);
         }
@@ -153,29 +155,25 @@ void http(struct hss_sock *c_ptr) {
         error("close"); return;
     }
 }
-void res(struct hss_sock *c_ptr, char *mes, size_t len) {
-    if(len == NULL) {
-        write(c_ptr->fd, mes, sizeof(mes));
-    } else {
-        write(c_ptr->fd, mes, len);
-    }
+void res(struct hss_sock *c_ptr, char *mes) {
+    write(c_ptr->fd, mes, sizeof(mes));
 }
 void error(char *mes) {
     write(2, mes, strlen(mes));
 }
-void mime(struct hss_sock *c_ptr) {
+void setmimetype(struct hss_sock *c_ptr, struct hss_req *r_ptr) {
     struct mimetypes {
         char regex[0xff];
         char type[0xfff];
     };
     struct mimetypes m_type[] = {
-        {"jpg", "iamge/jpg"},
-        {"gif", "image/gif"},
-        {"png", "image/png"},
-        {"html", "text/html"},
-        {"\\/", "text/html"},
-        {"js", "text/plain"},
-        {"css", "text/css"}
+        {"\\.jpg$",  "iamge/jpg"},
+        {"\\.gif$",  "image/gif"},
+        {"\\.png$",  "image/png"},
+        {"\\.html$", "text/html"},
+        {"\\/$",     "text/html"},
+        {"\\.js$",   "text/plain"},
+        {"\\.css$",  "text/css"}
     };
 
     regex_t regst;
@@ -184,9 +182,10 @@ void mime(struct hss_sock *c_ptr) {
 
     for(i = 0; i < sizeof(m_type); i++) {
         if(!regcomp(&regst, m_type[i].regex, REG_EXTENDED)){
-            if(!regexec(&regst, c_ptr->uri, 1, match, 0)) {
-                res(c_ptr->fd, m_type[i].type, NULL);
-                res(c_ptr->fd, "\n", NULL);
+            if(!regexec(&regst, r_ptr->uri, 1, match, 0)) {
+                res(c_ptr, "Content-Type: ");
+                res(c_ptr, m_type[i].type);
+                res(c_ptr, "\n");
                 flag = 1;
                 break;
             }
@@ -205,6 +204,6 @@ void mime(struct hss_sock *c_ptr) {
     regfree(&regst);
     */
     if(!flag) {
-        res(c_tr->fd, "Content-Type: text/plin\n", NULL);
+        res(c_ptr, "Content-Type: text/plain\n");
     }
 }
