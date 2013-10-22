@@ -13,7 +13,7 @@ void fork_process(int *server_fd);
 void sendmes(int sockfd, char *mes);
 void error(char *mes);
 void ignore_sigpipe();
-void changeroot();
+int changeroot();
 
 int main(){
     int server_fd, pid;
@@ -31,7 +31,7 @@ int main(){
     if(bind(server_fd, (struct sockaddr *)&server_address, server_address_len) == -1) { printf("err: bind()\n"); return -1; }
     if(listen(server_fd, max_children*5) == -1) { printf("err: listen()\n"); return -1; }
 
-    changeroot();
+    if( changeroot() == -1 ) { return 0; }
     ignore_sigpipe();
 
     int childid;
@@ -42,10 +42,11 @@ int main(){
     }
     return 0;
 }
-void changeroot() {
+int changeroot() {
     char docroot[1024] = {"/home/ec2-user/webapp/static"};
     if( chdir(docroot) == -1 ) {
         error("chdir failed\n");
+        return -1;
     }
     if( chroot(docroot) == -1 ) {
         int errsv = errno;
@@ -58,7 +59,9 @@ void changeroot() {
         if(errsv == ENOMEM) { error("7\n"); }
         if(errsv == ENOTDIR) { error("8\n"); }
         if(errsv == EPERM) { error("9\n"); }
+        return -1;
     }
+    return 0;
 }
 void ignore_sigpipe() {
     struct sigaction act;
@@ -73,6 +76,12 @@ void fork_process(int *server_fd) {
     int client_fd;
     struct sockaddr_in client_address;
     socklen_t client_address_len;
+
+    uid_t uid = 2;
+    gid_t gid = 2;
+
+    setuid(uid);
+    setgid(gid);
 
     while(1){
         while((client_fd = accept(*server_fd, (struct sockaddr *)&client_address, &client_address_len)) == -1) { error("accept\n"); sleep(1); };
