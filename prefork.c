@@ -6,12 +6,14 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <signal.h>
+#include <errno.h>
 
 void http (int sockfd);
 void fork_process(int *server_fd);
 void sendmes(int sockfd, char *mes);
 void error(char *mes);
 void ignore_sigpipe();
+void changeroot();
 
 int main(){
     int server_fd, pid;
@@ -29,7 +31,9 @@ int main(){
     if(bind(server_fd, (struct sockaddr *)&server_address, server_address_len) == -1) { printf("err: bind()\n"); return -1; }
     if(listen(server_fd, max_children*5) == -1) { printf("err: listen()\n"); return -1; }
 
+    changeroot();
     ignore_sigpipe();
+
     int childid;
     for(childid = 0; childid < max_children; childid++) {
         if((pid = fork()) == 0) {
@@ -37,6 +41,24 @@ int main(){
         }
     }
     return 0;
+}
+void changeroot() {
+    char docroot[1024] = {"/home/ec2-user/webapp/static"};
+    if( chdir(docroot) == -1 ) {
+        error("chdir failed\n");
+    }
+    if( chroot(docroot) == -1 ) {
+        int errsv = errno;
+        if(errsv == EACCES) { error("1\n"); }
+        if(errsv == EFAULT) { error("2\n"); }
+        if(errsv == EIO) { error("3\n"); }
+        if(errsv == ELOOP) { error("4\n"); }
+        if(errsv == ENAMETOOLONG) { error("5\n"); }
+        if(errsv == ENOENT) { error("6\n"); }
+        if(errsv == ENOMEM) { error("7\n"); }
+        if(errsv == ENOTDIR) { error("8\n"); }
+        if(errsv == EPERM) { error("9\n"); }
+    }
 }
 void ignore_sigpipe() {
     struct sigaction act;
@@ -69,7 +91,6 @@ void http(int sockfd) {
     char meth_name[16];
     char uri_addr[256];
     char http_ver[64];
-    char docroot[1024] = {"/home/ec2-user/webapp"};
     int fd;
     read(sockfd, &buf, sizeof(buf));
     sscanf(buf, "%s %s %s", meth_name, uri_addr, http_ver);
@@ -80,8 +101,8 @@ void http(int sockfd) {
         sendmes(sockfd, "Server: C lang\n");
     }
     else {
-        strncat(docroot, uri_addr, strlen(uri_addr) + strlen(docroot));
-        fd = open(docroot, O_RDONLY);
+        // strncat(docroot, uri_addr, strlen(uri_addr) + strlen(docroot));
+        fd = open(uri_addr, O_RDONLY);
         if(fd == -1) {
             error("not found\n");
             sendmes(sockfd, "HTTP/1.0 404 NOT FOUND\n");
