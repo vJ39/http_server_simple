@@ -8,8 +8,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <regex.h>
+#include <sys/stat.h>
 
-#define SERVER_NAME "C lang"
 #define MAX_CHILDREN 3
 
 struct hss_sock {
@@ -23,14 +23,47 @@ struct hss_req {
     char ver[64];
     int fd;
 };
+struct hss_res {
+    char status_code[4];
+    char status_message[20];
+    char type[0xff];
+};
 
+void response_header(struct hss_sock *, struct hss_res *);
 void http (struct hss_sock *);
 void fork_process(struct hss_sock *);
 void res(struct hss_sock *, char *);
 void error(char *);
 void ignore_sigpipe(void);
 int changeroot(void);
-void setmimetype(struct hss_sock *, struct hss_req *);
+void setmimetype(struct hss_req *, struct hss_res *);
+void parse_request(struct hss_req *, struct hss_res *);
+
+/*
+ * struct hss_sock *c_ptr = client socket
+ * struct hss_res  *r_ptr = response header
+ * */
+void response_header(struct hss_sock *c_ptr, struct hss_res *r_ptr) {
+    // HTTP version
+    write(c_ptr->fd, "HTTP/1.0 ", 9);
+    // status code and message
+    write(c_ptr->fd, r_ptr->status_code, 3);
+    write(c_ptr->fd, " ", 1);
+    write(c_ptr->fd, r_ptr->status_message, strlen(r_ptr->status_message));
+    write(c_ptr->fd, "\n", 1);
+    // server name
+    write(c_ptr->fd, "Server: C lang\n", 15);
+    // content type
+    write(c_ptr->fd, "Content-Type: ", 14);
+    write(c_ptr->fd, r_ptr->type, strlen(r_ptr->type));
+    write(c_ptr->fd, "\n", 1);
+    // end header
+    write(c_ptr->fd, "\n", 1);
+}
+void res(struct hss_sock *c_ptr, char *mes) {
+    write(c_ptr->fd, mes, strlen(mes));
+    write(c_ptr->fd, "\n", 1);
+}
 
 int main(){
     int pid, ret;
@@ -68,7 +101,7 @@ int main(){
     return 0;
 }
 int changeroot() {
-    char docroot[1024] = {"/Users/yotsutake/webapp/http_server_simple"};
+    char docroot[1024] = {"/home/ec2-user/webapp/static"};
     if( chdir(docroot) == -1 ) {
         error("chdir failed");
         return -1;
@@ -106,45 +139,113 @@ void fork_process(struct hss_sock *s_ptr) {
     }
 }
 
-/*
-void setenvp(int *sock_fd, struct sockaddr *address) {
-    char buf[1024];
-    memset(buf, 0, sizeof(fields));
-    strncpy(envp[*sock_fd], "REMOTE_ADDR=", strlen("REMOTE_ADDR="));
-    strncat(envp[*sock_fd], address.sin_addr.s_addr, strlen(envp[*sock_fd]) + strlen(address.sin_addr.s_addr));
-    envp[*sock_fd]
+void parse_request(struct hss_req *req_ptr, struct hss_res *res_ptr) {
+    // initialize response header struct
+    *res_ptr = (struct hss_res) {"", "", ""};
+
+    // 501 Not Implemented
+    if( strcmp(req_ptr->method, "GET") != 0 ) {
+        *res_ptr = (struct hss_res) {
+            "501",
+            "Not Implemented",
+            "text/html"
+        };
+        req_ptr->fd = -1;
+        return;
+    }
+
+    struct stat st, *st_ptr; st_ptr = &st;
+    if( lstat(req_ptr->uri, st_ptr) == -1 ) {
+        int errsv = errno;
+        if(errsv == ENOENT) {
+            *res_ptr = (struct hss_res) {
+                "404",
+                "Not Found",
+                "text/html"
+            };
+        }
+        else {
+            *res_ptr = (struct hss_res) {
+                "403",
+                "Forbidden",
+                "text/html"
+            };
+        }
+        req_ptr->fd = -1;
+        return;
+    }
+    // is a directory
+    if( S_ISDIR(st_ptr->st_mode) ) {
+        strncat(req_ptr->uri, "/index.html", strlen(req_ptr->uri) + 11);
+        if( (req_ptr->fd = open(req_ptr->uri, O_RDONLY)) == -1) {
+            *res_ptr = (struct hss_res) {
+                "403",
+                "Forbidden",
+                "text/html"
+            };
+            req_ptr->fd = -1;
+            return;
+        }
+        // 200 OK
+        *res_ptr = (struct hss_res) {
+            "200",
+            "OK",
+            "text/html"
+        };
+        return;
+    }
+    else {
+        // open a regular file
+        if( (req_ptr->fd = open(req_ptr->uri, O_RDONLY)) == -1) {
+            *res_ptr = (struct hss_res) {
+                "403",
+                "Forbidden",
+                "text/html"
+            };
+            req_ptr->fd = -1;
+            return;
+        }
+        // 200 OK
+        strncpy(res_ptr->status_code, "200", 3);
+        strncpy(res_ptr->status_message, "OK", 2);
+        setmimetype(req_ptr, res_ptr);
+        return;
+    }
 }
-*/
 
 void http(struct hss_sock *c_ptr) {
+    char buf[0xffff] = {0};
     int ret;
-    char buf[0x10000] = {};
-    struct hss_req r, *r_ptr; r_ptr = &r;
+    struct hss_req req_h, *req_ptr; req_ptr = &req_h;
+    struct hss_res res_h, *res_ptr; res_ptr = &res_h;
 
+    // receive request
     read(c_ptr->fd, &buf, sizeof(buf));
-    sscanf(buf, "%s %s %s", r_ptr->method, r_ptr->uri, r_ptr->ver);
+    sscanf(buf, "%s %s %s", req_ptr->method, req_ptr->uri, req_ptr->ver);
 
-    if( strcmp(r_ptr->method, "GET") != 0 ) {
-        res(c_ptr, "501 Not Implemented");
-        res(c_ptr, SERVER_NAME);
-    } else {
-        r_ptr->fd = open(r_ptr->uri, O_RDONLY);
-        if(r_ptr->fd == -1) {
-            error("NOT FOUND");
-            res(c_ptr, "HTTP/1.0 404 NOT FOUND");
-            res(c_ptr, SERVER_NAME);
-            res(c_ptr, "Content-Type: text/html\n");
-            res(c_ptr, "<html><body><h1>404 NOT FOUND</h1></body></html>");
-        } else {
-            res(c_ptr, "HTTP/1.0 200 OK");
-            res(c_ptr, SERVER_NAME);
-            setmimetype(c_ptr, r_ptr);
-            do {
-                ret = read(r_ptr->fd, &buf, sizeof(buf));
-                write(c_ptr->fd, buf, ret);
-            } while(ret > 0);
-            close(r_ptr->fd);
-        }
+    // parse request header
+    parse_request(req_ptr, res_ptr);
+
+    // output response header
+    response_header(c_ptr, res_ptr);
+
+    // output response body
+    if(req_ptr->fd >= 3) {
+        char buf[0xffff] = {0};
+        do {
+            ret = read(req_ptr->fd, &buf, sizeof(buf));
+            write(c_ptr->fd, buf, ret);
+        } while(ret > 0);
+        close(req_ptr->fd);
+    }
+    // HTTP error response
+    else {
+        if(!strcmp(res_ptr->status_code, "501"))
+            res(c_ptr, "<html><body><h1>501 Not Implemented</h1></body></html>");
+        if(!strcmp(res_ptr->status_code, "403"))
+            res(c_ptr, "<html><body><h1>403 Forbidden</h1></body></html>");
+        if(!strcmp(res_ptr->status_code, "404"))
+            res(c_ptr, "<html><body><h1>404 Not Found</h1></body></html>");
     }
     ret = shutdown(c_ptr->fd, SHUT_WR);
     if(ret == -1) {
@@ -155,55 +256,37 @@ void http(struct hss_sock *c_ptr) {
         error("close"); return;
     }
 }
-void res(struct hss_sock *c_ptr, char *mes) {
-    write(c_ptr->fd, mes, sizeof(mes));
-}
 void error(char *mes) {
     write(2, mes, strlen(mes));
 }
-void setmimetype(struct hss_sock *c_ptr, struct hss_req *r_ptr) {
+void setmimetype(struct hss_req *req_ptr, struct hss_res *res_ptr) {
     struct mimetypes {
         char regex[0xff];
         char type[0xfff];
     };
     struct mimetypes m_type[] = {
-        {"\\.jpg$",  "iamge/jpg"},
+        {"\\.jpg$",  "image/jpg"},
         {"\\.gif$",  "image/gif"},
         {"\\.png$",  "image/png"},
         {"\\.html$", "text/html"},
-        {"\\/$",     "text/html"},
-        {"\\.js$",   "text/plain"},
+        {"\\.htm$",  "text/html"},
         {"\\.css$",  "text/css"}
     };
 
     regex_t regst;
     regmatch_t match[1];
-    int flag = 0, i;
+    int i, flag = 0;
 
-    for(i = 0; i < sizeof(m_type); i++) {
+    for(i = 0; i < (sizeof(m_type) / sizeof(m_type[0])); i++) {
         if(!regcomp(&regst, m_type[i].regex, REG_EXTENDED)){
-            if(!regexec(&regst, r_ptr->uri, 1, match, 0)) {
-                res(c_ptr, "Content-Type: ");
-                res(c_ptr, m_type[i].type);
-                res(c_ptr, "\n");
+            if(!regexec(&regst, req_ptr->uri, 1, match, 0)) {
+                strncpy(res_ptr->type, m_type[i].type, strlen(m_type[i].type));
                 flag = 1;
-                break;
             }
         }
         regfree(&regst);
     }
-    /*
-    reg = "\\.cgi?$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            flag = 1;
-            char *envp[];
-            execve(uri, NULL, );
-        }
-    }
-    regfree(&regst);
-    */
     if(!flag) {
-        res(c_ptr, "Content-Type: text/plain\n");
+        strncpy(res_ptr->type, "text/plain", 10);
     }
 }
