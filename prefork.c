@@ -7,15 +7,13 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
-#include <regex.h>
 
-void http (int *sockfd);
+void http (int sockfd);
 void fork_process(int *server_fd);
-void sendmes(int *sockfd, char *mes);
+void sendmes(int sockfd, char *mes);
 void error(char *mes);
 void ignore_sigpipe();
 int changeroot();
-void mime(int *, char *);
 
 int main(){
     int server_fd, pid;
@@ -87,7 +85,7 @@ void fork_process(int *server_fd) {
 
     while(1){
         while((client_fd = accept(*server_fd, (struct sockaddr *)&client_address, &client_address_len)) == -1) { error("accept\n"); sleep(1); };
-        http(&client_fd);
+        http(client_fd);
         if(client_fd == -1) {
             error("accept failed\n");
         }
@@ -97,13 +95,13 @@ void fork_process(int *server_fd) {
     close(*server_fd);
 }
 
-void http(int *sockfd) {
+void http(int sockfd) {
     char buf[0x10000] = {};
     char meth_name[16];
     char uri_addr[256];
     char http_ver[64];
     int fd;
-    read(*sockfd, &buf, sizeof(buf));
+    read(sockfd, &buf, sizeof(buf));
     sscanf(buf, "%s %s %s", meth_name, uri_addr, http_ver);
     memset(buf, 0, sizeof(buf));
 
@@ -126,71 +124,16 @@ void http(int *sockfd) {
             close(fd);
             sendmes(sockfd, "HTTP/1.0 200 OK\n");
             sendmes(sockfd, "Server: C lang\n");
-            mime(sockfd, uri_addr);
+            sendmes(sockfd, "Content-Type: text/html\n\n");
             sendmes(sockfd, buf);
         }
     }
-    if( (shutdown(*sockfd, SHUT_WR)) == -1) { error("shutdown\n"); return; }
-    if( (close(*sockfd)) == -1) { error("close\n"); }
+    if( (shutdown(sockfd, SHUT_WR)) == -1) { error("shutdown\n"); return; }
+    if( (close(sockfd)) == -1) { error("close\n"); }
 }
-void sendmes(int *sockfd, char *mes) {
-    write(*sockfd, mes, strlen(mes));
+void sendmes(int sockfd, char *mes) {
+    write(sockfd, mes, strlen(mes));
 }
 void error(char *mes) {
     write(1, mes, strlen(mes));
-}
-void mime(int *sockfd, char *uri) {
-    regex_t regst;
-    regmatch_t match[1];
-    char *reg;
-    int flag = 0;
-    reg = "\\.jpg$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            sendmes(sockfd, "Content-Type: image/jpg\n\n");
-            flag = 1;
-        }
-    }
-    regfree(&regst);
-    reg = "\\.gif$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            sendmes(sockfd, "Content-Type: image/gif\n\n");
-            flag = 1;
-        }
-    }
-    regfree(&regst);
-    reg = "\\.png$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            sendmes(sockfd, "Content-Type: image/png\n\n");
-            flag = 1;
-        }
-    }
-    regfree(&regst);
-    reg = "\\.js$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            sendmes(sockfd, "Content-Type: text/plain\n\n");
-            flag = 1;
-        }
-    }
-    regfree(&regst);
-    reg = "\\.css$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            sendmes(sockfd, "Content-Type: text/css\n\n");
-            flag = 1;
-        }
-    }
-    regfree(&regst);
-    reg = "\\.html?$";
-    if(!regcomp(&regst, reg, REG_EXTENDED)){
-        if(!regexec(&regst, uri, 1, match, 0)) {
-            sendmes(sockfd, "Content-Type: text/html\n\n");
-            flag = 1;
-        }
-    }
-    regfree(&regst);
-    if(!flag) { sendmes(sockfd, "Content-Type: text/plain\n\n"); }
 }
