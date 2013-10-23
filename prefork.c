@@ -17,11 +17,16 @@ struct hss_sock {
     socklen_t len;
     struct sockaddr_in ad; // netinet/in.h
 };
+struct kv {
+    char key[0xff];
+    char val[0xfff];
+};
 struct hss_req {
     char method[16];
     char uri[1024];
     char ver[64];
     int fd;
+    struct kv header[1024][0xff];
 };
 struct hss_res {
     char status_code[4];
@@ -53,6 +58,8 @@ void response_header(struct hss_sock *c_ptr, struct hss_res *r_ptr) {
     write(c_ptr->fd, "\n", 1);
     // server name
     write(c_ptr->fd, "Server: C lang\n", 15);
+    // connection
+    write(c_ptr->fd, "Connection: Closed\n", 19);
     // content type
     write(c_ptr->fd, "Content-Type: ", 14);
     write(c_ptr->fd, r_ptr->type, strlen(r_ptr->type));
@@ -101,7 +108,7 @@ int main(){
     return 0;
 }
 int changeroot() {
-    char docroot[1024] = {"/home/ec2-user/webapp/static"};
+    char docroot[1024] = {"/Users/yotsutake/webapp"};
     if( chdir(docroot) == -1 ) {
         error("chdir failed");
         return -1;
@@ -220,9 +227,10 @@ void http(struct hss_sock *c_ptr) {
     struct hss_res res_h, *res_ptr; res_ptr = &res_h;
 
     // receive request
-    read(c_ptr->fd, &buf, sizeof(buf));
-    sscanf(buf, "%s %s %s", req_ptr->method, req_ptr->uri, req_ptr->ver);
-
+    char buf2[0xffff] = {0};
+    read(c_ptr->fd, buf, sizeof(buf));
+    // parse query parameter
+    parse_query_parameter(req_prt);
     // parse request header
     parse_request(req_ptr, res_ptr);
 
@@ -290,3 +298,62 @@ void setmimetype(struct hss_req *req_ptr, struct hss_res *res_ptr) {
         strncpy(res_ptr->type, "text/plain", 10);
     }
 }
+
+void parse_request_header(struct hss_req *req_ptr, char *buf) {
+    struct headers {
+        char key[0xff];
+        char val[0xfff];
+    };
+    char delim[] = {"\r?\n"};
+    char sep[] = {": "};
+
+    regex_t regst;
+    regmatch_t match[50];
+    int i, flag = 0;
+
+    // lines
+    if(!regcomp(&regst, sep, REG_EXTENDED)){
+        if(!regexec(&regst, buf, 0, match, 0)) {
+            strncpy(res_ptr->type, m_type[i].type, strlen(m_type[i].type));
+            flag = 1;
+        }
+    }
+    regfree(&regst);
+    if(!flag) {
+        strncpy(res_ptr->type, "text/plain", 10);
+    }
+}
+
+void parse_query_parameter(char *buf, struct hss_req *req_ptr) {
+    sscanf(buf, "%s %s %s", req_ptr->method, req_ptr->uri, req_ptr->ver);
+}
+/*
+struct kv {
+    char key[0xff];
+    char val[0xfff];
+};
+
+extern char **environ;
+void setval(char *, struct kv *);
+
+int setenvironment(struct hss_sock *c_ptr, struct hss_req *req_ptr, struct hss_res *res_ptr){
+    struct kv e[] = {
+        (struct kv) {"HTTP_USER_AGENT", ""},
+        (struct kv) {"REQUEST_METHOD", "GET"},
+        (struct kv) {"GATEWAY_INTERFACE", "CGI/1.1"},
+        (struct kv) {"QUERY_STRING", ""},
+        (struct kv) {"REQUEST_URI", ""},
+        (struct kv) {"SCRIPT_NAME", ""},
+        (struct kv) {"SCRIPT_FILENAME", ""},
+        (struct kv) {"REMOTE_ADDR", ""},
+    };
+    setval(v[p], &e);
+    printf("%s\n", v[p]);
+    return 0;
+}
+void setval(char *v, struct kv *e){
+    strncat(v, e->key, strlen(e->key));
+    strncat(v, "=", (size_t)1);
+    strncat(v, e->val, strlen(v)+strlen(e->val));
+}
+*/
