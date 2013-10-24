@@ -278,6 +278,7 @@ void http(struct hss_sock *c_ptr) {
 }
 void error(char *mes) {
     write(2, mes, strlen(mes));
+    write(2, "\n", 1);
 }
 void setmimetype(struct hss_req *req_ptr, struct hss_res *res_ptr) {
     struct mimetypes {
@@ -318,12 +319,15 @@ void parse_request_header(char *header, struct hss_req *req_ptr) {
     int i = 0;
 
     for(v = strtok_r(header, "\n", &pt); v; v = strtok_r(NULL, "\n", &pt)) {
+        if(strcmp(v, "\n\n")) break;
+        if(strcmp(v, "\r\n\r\n")) break;
         if( (key = strsep((char **)&v, ": ")) == NULL) break;
         if( (val = strsep((char **)&v, "\n")) == NULL) break;
         strncpy(req_ptr->header[i].k, key, strlen(key));
         strncpy(req_ptr->header[i].v, val+1, strlen(val+1));
         i++;
     }
+    req_ptr->body = v;
     /*
     for(; i > 0; i--) {
         printf("%s=%s\n", req_ptr->header[i].k, req_ptr->header[i].v);
