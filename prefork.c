@@ -18,11 +18,17 @@ struct hss_sock {
     socklen_t len;
     struct sockaddr_in ad; // netinet/in.h
 };
+struct kv {
+    char k[0xfff];
+    char v[0xffff];
+};
 struct hss_req {
     char method[16];
     char uri[1024];
     char ver[64];
     int fd;
+    struct kv header[49];
+    char *body;
 };
 struct hss_res {
     char status_code[4];
@@ -38,7 +44,8 @@ void error(char *);
 void ignore_sigpipe(void);
 int changeroot(void);
 void setmimetype(struct hss_req *, struct hss_res *);
-void parse_request(struct hss_req *, struct hss_res *);
+void parse_request_header(char *, struct hss_req *);
+void open_request_file(struct hss_req *, struct hss_res *);
 
 /*
  * struct hss_sock *c_ptr = client socket
@@ -140,7 +147,7 @@ void fork_process(struct hss_sock *s_ptr) {
     }
 }
 
-void parse_request(struct hss_req *req_ptr, struct hss_res *res_ptr) {
+void open_request_file(struct hss_req *req_ptr, struct hss_res *res_ptr) {
     // initialize response header struct
     *res_ptr = (struct hss_res) {"", "", ""};
 
@@ -216,7 +223,7 @@ void parse_request(struct hss_req *req_ptr, struct hss_res *res_ptr) {
 
 void http(struct hss_sock *c_ptr) {
     char *buf;
-    size_t buflen = 1024*1024*16;
+    size_t buflen = 1024*1024*32;
     int realloc_count = 1;
     int ret;
     struct hss_req req_h, *req_ptr; req_ptr = &req_h;
@@ -226,17 +233,18 @@ void http(struct hss_sock *c_ptr) {
     buf = malloc(buflen);
     bzero(buf, buflen);
 
-    while( (ret = read(c_ptr->fd, buf + (buflen * realloc_count - 1), buflen)) == buflen ) {
+    while( (ret = read(c_ptr->fd, buf + buflen * (realloc_count - 1), buflen)) == buflen ) {
         realloc_count++;
         buf = realloc(buf, buflen * realloc_count );
         bzero(buf + buflen * (realloc_count - 1), buflen);
     }
-printf("%s", buf);
-    sscanf(buf, "%s %s %s", req_ptr->method, req_ptr->uri, req_ptr->ver);
+    // parse http header
+    parse_request_header(buf, req_ptr);
+
     free(buf);
 
-    // parse request header
-    parse_request(req_ptr, res_ptr);
+    // parse request header (request filename)
+    open_request_file(req_ptr, res_ptr);
 
     // output response header
     response_header(c_ptr, res_ptr);
@@ -301,4 +309,24 @@ void setmimetype(struct hss_req *req_ptr, struct hss_res *res_ptr) {
     if(!flag) {
         strncpy(res_ptr->type, "text/plain", 10);
     }
+}
+void parse_request_header(char *header, struct hss_req *req_ptr) {
+
+    sscanf(header, "%s %s %s", req_ptr->method, req_ptr->uri, req_ptr->ver);
+
+    char *v, *pt, *key, *val;
+    int i = 0;
+
+    for(v = strtok_r(header, "\n", &pt); v; v = strtok_r(NULL, "\n", &pt)) {
+        if( (key = strsep((char **)&v, ": ")) == NULL) break;
+        if( (val = strsep((char **)&v, "\n")) == NULL) break;
+        strncpy(req_ptr->header[i].k, key, strlen(key));
+        strncpy(req_ptr->header[i].v, val+1, strlen(val+1));
+        i++;
+    }
+    /*
+    for(; i > 0; i--) {
+        printf("%s=%s\n", req_ptr->header[i].k, req_ptr->header[i].v);
+    }
+    */
 }

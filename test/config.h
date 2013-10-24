@@ -1,1 +1,1 @@
-typedef unsigned long int uint;
+typedef int myInt;

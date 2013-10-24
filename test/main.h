@@ -1,2 +1,3 @@
 #include "config.h"
-uint i;
+void print(void);
+extern myInt i;
