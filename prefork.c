@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <regex.h>
 #include <sys/stat.h>
+#include <stdlib.h>
 
 #define MAX_CHILDREN 3
 
@@ -101,7 +102,7 @@ int main(){
     return 0;
 }
 int changeroot() {
-    char docroot[1024] = {"/home/ec2-user/webapp/static"};
+    const char docroot[] = {"/usr/home/app"};
     if( chdir(docroot) == -1 ) {
         error("chdir failed");
         return -1;
@@ -214,14 +215,25 @@ void parse_request(struct hss_req *req_ptr, struct hss_res *res_ptr) {
 }
 
 void http(struct hss_sock *c_ptr) {
-    char buf[0xffff] = {0};
+    char *buf;
+    size_t buflen = 1024*1024*16;
+    int realloc_count = 1;
     int ret;
     struct hss_req req_h, *req_ptr; req_ptr = &req_h;
     struct hss_res res_h, *res_ptr; res_ptr = &res_h;
 
     // receive request
-    read(c_ptr->fd, &buf, sizeof(buf));
+    buf = malloc(buflen);
+    bzero(buf, buflen);
+
+    while( (ret = read(c_ptr->fd, buf + (buflen * realloc_count - 1), buflen)) == buflen ) {
+        realloc_count++;
+        buf = realloc(buf, buflen * realloc_count );
+        bzero(buf + buflen * (realloc_count - 1), buflen);
+    }
+printf("%s", buf);
     sscanf(buf, "%s %s %s", req_ptr->method, req_ptr->uri, req_ptr->ver);
+    free(buf);
 
     // parse request header
     parse_request(req_ptr, res_ptr);
