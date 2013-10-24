@@ -7,7 +7,7 @@ typedef unsigned long int uint32;
 #define MEGA 1024*1024
 int main(void) {
     char *buf;
-    size_t buflen = 16 * MEGA;
+    size_t buflen = 32 * MEGA;
     size_t r;
     int realloc_count;
     int fd;
