@@ -1,3 +1,5 @@
+#include <sys/types.h>
+#include <sys/jail.h>
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
@@ -11,6 +13,9 @@
 #include <sys/stat.h>
 
 #define MAX_CHILDREN 3
+
+#define MAXPATHLEN 1024
+#define MAXHOSTNAMELEN 256
 
 struct hss_sock {
     int fd;
@@ -69,18 +74,31 @@ int main(){
     int pid, ret;
     struct hss_sock s_sock, *s_ptr; s_ptr = &s_sock;
 
+    struct jail str_j;
+    struct in_addr *addr;
+    int jid;
+
+    char path[MAXPATHLEN] = {"/usr/home/yotsutake/webapp"};
+    char hostname[MAXHOSTNAMELEN] = {"jail.server"};
+
+    /*
     ret = changeroot();
     if(ret == -1) {
         return -1;
     }
-    setuid( (uid_t)2 );
-    setgid( (gid_t)2 );
-    ignore_sigpipe();
+    */
+    str_j.version = 0;
+    str_j.path = path;
+    str_j.hostname = hostname;
+    inet_aton("192.168.1.199", addr);
+    str_j.ip4 = addr;
+
+    jid = jail(&str_j);
 
     // create server sock
     s_ptr->ad.sin_family = AF_INET;
     s_ptr->ad.sin_port = htons(5000); // <arpa/inet.h>
-    s_ptr->ad.sin_addr.s_addr = htonl(INADDR_ANY); // <arpa/inet.h>
+    s_ptr->ad.sin_addr.s_addr = inet_addr("192.168.1.199"); // <arpa/inet.h>
     s_ptr->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     s_ptr->len = sizeof(s_ptr->ad);
 
@@ -92,6 +110,11 @@ int main(){
     if(ret == -1) {
         error("listen"); return -1;
     }
+
+    setuid( (uid_t)2 );
+    setgid( (gid_t)2 );
+    ignore_sigpipe();
+
     int i;
     for(i = 0; i < MAX_CHILDREN; i++) {
         if((pid = fork()) == 0) {
@@ -101,7 +124,7 @@ int main(){
     return 0;
 }
 int changeroot() {
-    char docroot[1024] = {"/home/ec2-user/webapp/static"};
+    char docroot[1024] = {"/usr/home/yotsutake/webapp"};
     if( chdir(docroot) == -1 ) {
         error("chdir failed");
         return -1;
