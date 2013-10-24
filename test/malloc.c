@@ -5,6 +5,7 @@
 #include <fcntl.h>
 typedef unsigned long int uint32;
 #define MEGA 1024*1024
+
 int main(void) {
     char *buf;
     size_t buflen = 32 * MEGA;
@@ -21,6 +22,8 @@ printf("0x%lx\n", (uint32)buf);
         buf = reallocf(buf, buflen * realloc_count);
         bzero(buf + buflen * (realloc_count - 1), buflen);
     }
+    close(fd);
+
 printf("0x%lx\n", (uint32)buf);
 write(1, buf, buflen * (realloc_count - 1) + r);
 write(1, "\n", 1);
